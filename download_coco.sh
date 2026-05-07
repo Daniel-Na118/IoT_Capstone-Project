@@ -2,7 +2,7 @@
 
 set -e
 
-YEAR=${2:-2014}
+YEAR=${2:-2017}
 if [ -z "$1" ]; then
   echo "usage download_mscoco.sh [data dir] (2014|2017)"
   exit
@@ -50,7 +50,7 @@ mv "val${YEAR}" "Images_val"
 BASE_INSTANCES_URL="http://images.cocodataset.org/annotations"
 INSTANCES_FILE="annotations_trainval${YEAR}.zip"
 download_and_unzip ${BASE_INSTANCES_URL} "${INSTANCES_FILE}"
-mkdir annotations
+
 cp "annotations_trainval${YEAR}/instances_train${YEAR}.json" "annotations/train.json"
 mv "annotations_trainval${YEAR}/instances_val${YEAR}.json" "annotations/val.json"
 rm -rf "annotations_trainval${YEAR}"

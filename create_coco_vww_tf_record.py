@@ -245,7 +245,7 @@ def _create_tf_record_from_coco_annotations(annotations_file, image_dir,
           total_positive += 1
     logging.info('Finished writing, skipped %d annotations.',
                  total_num_annotations_skipped)
-    logging.info(f'Total of {total_positive} positie examples and {total_negative} negative examples created')
+    logging.info(f'Total of {total_positive} positive examples and {total_negative} negative examples created')
 
 
 def main(_):
