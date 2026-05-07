@@ -110,7 +110,7 @@ model.compile(
 )
 
 print("Setting up callbacks...")
-ckpt_path = f'models/{MODEL_NAME}/best_val.ckpt'
+ckpt_path = f'models/{MODEL_NAME}/best_val.weights.h5'
 callbacks = [
     tf.keras.callbacks.ModelCheckpoint(
         ckpt_path, 
@@ -123,12 +123,6 @@ callbacks = [
         monitor='val_loss',
         patience=5,
         restore_best_weights=True
-    ),
-    tf.keras.callbacks.ReduceLROnPlateau(
-        monitor='val_loss',
-        factor=0.5,
-        patience=2,
-        min_lr=1e-7
     )
 ]
 
@@ -142,5 +136,5 @@ history = model.fit(
 )
 
 print(f"Saving model to exported_models/{MODEL_NAME}/saved_model...")
-model.save(f'exported_models/{MODEL_NAME}/saved_model')
+model.export(f'exported_models/{MODEL_NAME}/saved_model')
 print("Finish training and saving model")
