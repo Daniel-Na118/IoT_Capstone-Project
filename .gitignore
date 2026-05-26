@@ -4,3 +4,8 @@ data/
 include/
 lib/
 lib64/
+lib
+lib64
+pip.conf
+pyvenv.cfg
+lib/python3.12/
