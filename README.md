@@ -103,8 +103,6 @@ Each experiment saves:
 - Training metrics (per-epoch history + final accuracy) : `results/<name>/metrics.json`
 - Exported SavedModel : `exported_models/<name>/saved_model`
 
-A summary table is printed at the end comparing all experiments against the baseline.
-
 ### Configured Experiments
 
 | Name | Architecture | Dataset | Notes |
@@ -117,6 +115,8 @@ A summary table is printed at the end comparing all experiments against the base
 | `v1_alpha05` | MobileNet V1 α=0.5, 96×96 | COCO | Higher-capacity MobileNet V1 |
 | `scratch_v2` | MobileNet V2 α=0.35, 96×96 | Wake Vision | Trained from scratch (no ImageNet weights), Adam optimizer |
 | `transfer_v2` | MobileNet V2 α=0.35, 96×96 | Wake Vision | Two-phase transfer learning: freeze 15 epochs ; unfreeze all at LR=1e-5 |
+| `v2_basic_wv` | MobileNet V2 α=0.35, 96×96 | Wake Vision | Same as `v2_basic` but on Wake Vision — isolates dataset quality gain |
+| `v1_128_wv` | MobileNet V1 α=0.25, 128×128 | Wake Vision | Same as `v1_128` but on Wake Vision — isolates dataset quality gain |
 
 ---
 
@@ -182,18 +182,42 @@ Edit the `MODEL_NAME`, `ALPHA`, `INPUT_HEIGHT`, `INPUT_WIDTH` variables at the t
 
 ## Results
 
+### COCO Experiments
+
+All experiments below train and validate on the COCO 2017 VWW split. SGD + cosine decay
+
 | Experiment | Val Acc | AUC | Precision | Recall | Time | Beats baseline |
 |---|---|---|---|---|---|---|
-| `v1_128` | **87.43%** | 0.8932 | 0.8987 | 0.8149 | 10.7m | ✓ |
-| `v2_basic` | **87.27%** | 0.8834 | 0.9236 | 0.7845 | 5.3m | ✓ |
-| `mobilenetv2_035` | 85.21% | 0.8702 | 0.9124 | 0.7456 | 5.1m | ✓ |
-| `v1_alpha05` | 84.99% | 0.8702 | 0.9075 | 0.7451 | 7.6m | ✓ |
+| `v1_128` | **87.43%** | 0.8932 | 0.8987 | 0.8149 | 10.7m | * |
+| `v2_basic` | **87.27%** | 0.8834 | 0.9236 | 0.7845 | 5.3m | * |
+| `mobilenetv2_035` | 85.21% | 0.8702 | 0.9124 | 0.7456 | 5.1m | * |
+| `v1_alpha05` | 84.99% | 0.8702 | 0.9075 | 0.7451 | 7.6m | * |
 | `baseline` | 83.75% | 0.8523 | 0.8834 | 0.7394 | 7.7m | — |
 | `aug_v2` | 83.19% | 0.8560 | 0.8845 | 0.7239 | 7.6m | |
-| `transfer_v2` | 81.09% | 0.8358 | 0.8707 | 0.7303 | 9.7m | |
-| `scratch_v2` | 78.18% | 0.8037 | 0.8341 | 0.7036 | 17.2m | |
 
-All COCO experiments use SGD + cosine decay. Wake Vision experiments (`scratch_v2`, `transfer_v2`) use Adam.
+### Wake Vision Experiments
+
+All experiments below train and validate on the Wake Vision dataset
+
+| Experiment | Val Acc | AUC | Time | Optimizer | Notes |
+|---|---|---|---|---|---|
+| `transfer_v2` | 81.09% | 0.8358 | 9.7m | Adam | Two-phase freeze -> unfreeze |
+| `v1_128_wv` | 80.69% | 0.8283 | 7.9m | Adam | Same arch as `v1_128` |
+| `v2_basic_wv` | 79.61% | 0.8143 | 6.7m | Adam | Same arch as `v2_basic` |
+| `scratch_v2` | 78.18% | 0.8037 | 17.2m | Adam | No pretrained weights |
+
+#### 왜 WV의 validation accuracy가 더 낮은가 (Speculation)
+
+숫자만을 보고 판단했을 때는, VW를 활용하여 training 된 모델들이 성능이 더 낮게 평가된다
+하지만 두 dataset은 서로 다른 validation set을 사용하여 둘을 바로 비교하는 것은 올바르지 않다:
+- COCO val은 COCO 2017 annotations에서 나오며 dataset의 image distribution을 나타낸다
+- Wake Vision val은 더 어려운 edge cases와 labeling ambiguity를 더 포함한 dataset으로, 구조적으로 더 어렵다
+
+네 개의 Wake Vision experiments는 약 79–81%의 validation accuracy를 보였다 (architecture, optimizer과 무관) 
+이 바운더리는 높은 확률로 모델이 아닌, validation set difficulty에 따른 속성이다. 
+SGD에서 Adam으로 optimizer을 바꿨더니 2% 정도의 validation accuracy 상승이 나타났지만 여전히 gap는 존재 (처음에 SGD 사용, epoch 1에서 peak)
+
+결론: **COCO-trained `v1_128` (87.43%) 과 `v2_basic` (87.27%) 이 가장 적합함** — 둘 다 SRAM 범위 내에 들어온다
 
 ![val_accuracy](./results/plots/val_accuracy_curves.png)
 
