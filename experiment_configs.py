@@ -89,4 +89,44 @@ EXPERIMENTS = [
         loss='bce',
         extra_notes='MobileNet V1 alpha=0.5 — more capacity at same resolution',
     ),
+
+    # --- Wake Vision experiments ---
+
+    ModelConfig(
+        name='scratch_v2',
+        architecture='mobilenetv2',
+        alpha=0.35,
+        input_height=96,
+        input_width=96,
+        epochs=80,
+        batch_size=128,
+        learning_rate=1e-3,
+        augmentation='strong',
+        loss='bce',
+        dataset='wake_vision',
+        optimizer='adam',
+        weights='none',
+        dropout_rate=0.2,
+        extra_notes='MobileNetV2 0.35 trained from scratch with Adam — no pretrained weights',
+    ),
+
+    ModelConfig(
+        name='transfer_v2',
+        architecture='mobilenetv2',
+        alpha=0.35,
+        input_height=96,
+        input_width=96,
+        epochs=50,
+        batch_size=128,
+        learning_rate=1e-3,
+        augmentation='basic',
+        loss='bce',
+        dataset='wake_vision',
+        optimizer='adam',
+        weights='imagenet',
+        finetune_after_epoch=15,
+        finetune_layers=-1,        # unfreeze all backbone layers
+        finetune_lr_scale=0.01,    # LR = 1e-5 (two orders lower)
+        extra_notes='Two-phase transfer learning: freeze 15ep → unfreeze all at 1e-5',
+    ),
 ]
