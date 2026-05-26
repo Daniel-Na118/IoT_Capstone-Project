@@ -112,6 +112,40 @@ EXPERIMENTS = [
     ),
 
     ModelConfig(
+        name='v2_basic_wv',
+        architecture='mobilenetv2',
+        alpha=0.35,
+        input_height=96,
+        input_width=96,
+        epochs=40,
+        batch_size=128,
+        learning_rate=1e-3,
+        augmentation='basic',
+        loss='bce',
+        dataset='wake_vision',
+        optimizer='adam',
+        patience=10,
+        extra_notes='v2_basic on Wake Vision with Adam — cleaner labels + adaptive optimizer',
+    ),
+
+    ModelConfig(
+        name='v1_128_wv',
+        architecture='mobilenetv1',
+        alpha=0.25,
+        input_height=128,
+        input_width=128,
+        epochs=40,
+        batch_size=64,
+        learning_rate=1e-3,
+        augmentation='basic',
+        loss='bce',
+        dataset='wake_vision',
+        optimizer='adam',
+        patience=10,
+        extra_notes='v1_128 on Wake Vision with Adam — cleaner labels + adaptive optimizer',
+    ),
+
+    ModelConfig(
         name='transfer_v2',
         architecture='mobilenetv2',
         alpha=0.35,
@@ -127,7 +161,7 @@ EXPERIMENTS = [
         weights='imagenet',
         finetune_after_epoch=15,
         finetune_layers=-1,        # unfreeze all backbone layers
-        finetune_lr_scale=0.01,    # LR = 1e-5 (two orders lower)
+        finetune_lr_scale=0.01,    # LR = 1e-5
         patience=7,
         finetune_patience=15,
         extra_notes='Two-phase transfer learning: freeze 15ep → unfreeze all at 1e-5',
