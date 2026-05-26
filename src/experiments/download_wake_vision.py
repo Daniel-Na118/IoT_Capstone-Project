@@ -14,8 +14,11 @@ import argparse
 import io
 import math
 import pathlib
+import sys
 
 import tensorflow as tf
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
 
 try:
     from datasets import load_dataset
@@ -26,7 +29,7 @@ except ImportError:
     )
 
 DATASET_ID = 'Harvard-Edge/Wake-Vision'
-OUTPUT_DIR = pathlib.Path('data/vww_tfrecord/wake_vision')
+OUTPUT_DIR = ROOT_DIR / 'data' / 'vww_tfrecord' / 'wake_vision'
 
 
 def _make_example(image_bytes: bytes, label: int) -> bytes:

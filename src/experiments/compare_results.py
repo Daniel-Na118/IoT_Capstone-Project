@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import numpy as np
 
-from train_experiment import _get_accuracy, _get_metric
+from train_experiment import _get_accuracy, _get_metric, ROOT_DIR
 
 REFERENCE_LABEL = 'baseline (ref)'
 
@@ -158,7 +158,7 @@ def plot_tflite_size_vs_accuracy(results: dict, out_path: pathlib.Path, ref_acc:
     """Scatter plot of TFLite model size (KB) vs final val accuracy."""
     names, accs, sizes = [], [], []
     for name, data in results.items():
-        tflite_path = pathlib.Path(f'exported_models/{name}/model.tflite')
+        tflite_path = ROOT_DIR / 'exported_models' / name / 'model.tflite'
         if not tflite_path.exists():
             continue
         size_kb = tflite_path.stat().st_size / 1024
@@ -220,9 +220,9 @@ def print_summary_table(results: dict, ref_acc: float = 0.0):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Compare VWW experiment results')
-    parser.add_argument('--results-dir', default='results',
+    parser.add_argument('--results-dir', default=str(ROOT_DIR / 'results'),
                         help='Directory containing experiment subdirs with metrics.json')
-    parser.add_argument('--output-dir', default='results/plots',
+    parser.add_argument('--output-dir', default=str(ROOT_DIR / 'results' / 'plots'),
                         help='Directory to save plots')
     args = parser.parse_args()
 

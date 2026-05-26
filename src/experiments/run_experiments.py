@@ -12,11 +12,11 @@ import pathlib
 import traceback
 
 from experiment_configs import EXPERIMENTS, REFERENCE_ACCURACY_FALLBACK
-from train_experiment import train, _get_accuracy, _get_metric
+from train_experiment import train, _get_accuracy, _get_metric, ROOT_DIR
 
 
 def _load_baseline_accuracy() -> float:
-    p = pathlib.Path('results/baseline/metrics.json')
+    p = ROOT_DIR / 'results' / 'baseline' / 'metrics.json'
     if p.exists():
         return _get_accuracy(json.loads(p.read_text()))
     return REFERENCE_ACCURACY_FALLBACK
@@ -33,7 +33,7 @@ def run_all(names_to_run: list[str], names_to_skip: list[str]):
             continue
 
         # Resume: skip if metrics already saved
-        metrics_path = pathlib.Path('results') / config.name / 'metrics.json'
+        metrics_path = ROOT_DIR / 'results' / config.name / 'metrics.json'
         if metrics_path.exists():
             print(f'\nLoading existing results for {config.name} ...')
             result = json.loads(metrics_path.read_text())

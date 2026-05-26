@@ -7,9 +7,11 @@ from typing import Optional
 
 tf.get_logger().setLevel('ERROR')
 
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
+
 TFRECORD_ROOTS = {
-    'coco2017':    pathlib.Path('data/vww_tfrecord/coco2017'),
-    'wake_vision': pathlib.Path('data/vww_tfrecord/wake_vision'),
+    'coco2017':    ROOT_DIR / 'data/vww_tfrecord/coco2017',
+    'wake_vision': ROOT_DIR / 'data/vww_tfrecord/wake_vision',
 }
 TFRECORD_PREFIX = {
     'coco2017':    'coco',
@@ -174,9 +176,9 @@ def _compile(model: tf.keras.Model, config: ModelConfig, lr: float):
 
 
 def train(config: ModelConfig) -> dict:
-    results_dir = pathlib.Path('results') / config.name
+    results_dir = ROOT_DIR / 'results' / config.name
     results_dir.mkdir(parents=True, exist_ok=True)
-    weights_dir = pathlib.Path('models') / config.name
+    weights_dir = ROOT_DIR / 'models' / config.name
     weights_dir.mkdir(parents=True, exist_ok=True)
     ckpt_path = str(weights_dir / 'best_val.weights.h5')
 
@@ -277,9 +279,9 @@ def train(config: ModelConfig) -> dict:
     print(f'Final val accuracy: {acc:.4f}')
 
     # Export SavedModel
-    export_path = f'exported_models/{config.name}/saved_model'
-    pathlib.Path(export_path).parent.mkdir(parents=True, exist_ok=True)
-    model.export(export_path)
+    export_path = ROOT_DIR / 'exported_models' / config.name / 'saved_model'
+    export_path.parent.mkdir(parents=True, exist_ok=True)
+    model.export(str(export_path))
     print(f'Model exported to {export_path}')
 
     return output
