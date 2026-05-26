@@ -38,6 +38,8 @@ class ModelConfig:
     finetune_after_epoch: Optional[int] = None  # None = no fine-tuning
     finetune_layers: int = 0           # layers to unfreeze; -1 = unfreeze all
     finetune_lr_scale: float = 0.1
+    patience: int = 7                  # early stopping patience (Phase 1 / single-phase)
+    finetune_patience: int = 12        # early stopping patience for Phase 2
     dropout_rate: float = 0.0
     label_smoothing: float = 0.0
     extra_notes: str = ''
@@ -204,29 +206,32 @@ def train(config: ModelConfig) -> dict:
     model = build_model(config)
     _compile(model, config, config.learning_rate)
 
-    callbacks = [
-        tf.keras.callbacks.ModelCheckpoint(
-            ckpt_path, save_weights_only=True,
-            monitor='val_accuracy', mode='max', save_best_only=True),
-        tf.keras.callbacks.EarlyStopping(
-            monitor='val_accuracy', patience=7,
-            restore_best_weights=True, mode='max'),
-    ]
+    def _make_callbacks(patience: int):
+        return [
+            tf.keras.callbacks.ModelCheckpoint(
+                ckpt_path, save_weights_only=True,
+                monitor='val_accuracy', mode='max', save_best_only=True),
+            tf.keras.callbacks.EarlyStopping(
+                monitor='val_accuracy', patience=patience,
+                restore_best_weights=True, mode='max'),
+        ]
 
     all_history = {}
     t0 = time.time()
 
     if config.finetune_after_epoch and config.finetune_layers != 0:
-        # Freeze backbone, warm up head only
+        # Phase 1: freeze backbone, warm up head only
         model.layers[1].trainable = False
         _compile(model, config, config.learning_rate)
         phase1_epochs = config.finetune_after_epoch
-        print(f'Phase 1: warming up head ({phase1_epochs} epochs, backbone frozen)...')
+        print(f'Phase 1: warming up head ({phase1_epochs} epochs, backbone frozen, '
+              f'patience={config.patience})...')
         h1 = model.fit(train_ds, validation_data=val_ds,
-                       epochs=phase1_epochs, callbacks=callbacks, verbose=1)
+                       epochs=phase1_epochs, callbacks=_make_callbacks(config.patience),
+                       verbose=1)
         _merge_history(all_history, h1.history)
 
-        # Unfreeze backbone for training
+        # Phase 2: unfreeze backbone — fresh callbacks so patience resets
         backbone = model.layers[1]
         backbone.trainable = True
         if config.finetune_layers != -1:
@@ -237,17 +242,18 @@ def train(config: ModelConfig) -> dict:
         remaining = config.epochs - phase1_epochs
         layers_desc = 'all layers' if config.finetune_layers == -1 else f'top {config.finetune_layers} layers'
         print(f'Phase 2: fine-tuning backbone {layers_desc} '
-              f'({remaining} epochs, lr={fine_lr:.2e})...')
+              f'({remaining} epochs, lr={fine_lr:.2e}, patience={config.finetune_patience})...')
         h2 = model.fit(train_ds, validation_data=val_ds,
                        epochs=remaining,
-                       initial_epoch=0,
-                       callbacks=callbacks, verbose=1)
+                       callbacks=_make_callbacks(config.finetune_patience), verbose=1)
         _merge_history(all_history, h2.history)
     else:
-        # --- Full end-to-end training (backbone fully trainable) ---
-        print(f'Training end-to-end ({config.epochs} epochs, backbone trainable)...')
+        # Full end-to-end training
+        print(f'Training end-to-end ({config.epochs} epochs, backbone trainable, '
+              f'patience={config.patience})...')
         h1 = model.fit(train_ds, validation_data=val_ds,
-                       epochs=config.epochs, callbacks=callbacks, verbose=1)
+                       epochs=config.epochs, callbacks=_make_callbacks(config.patience),
+                       verbose=1)
         _merge_history(all_history, h1.history)
 
     elapsed = time.time() - t0
