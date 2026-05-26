@@ -7,7 +7,14 @@ from typing import Optional
 
 tf.get_logger().setLevel('ERROR')
 
-TFRECORD_DIR = pathlib.Path('data/vww_tfrecord/coco2017')
+TFRECORD_ROOTS = {
+    'coco2017':    pathlib.Path('data/vww_tfrecord/coco2017'),
+    'wake_vision': pathlib.Path('data/vww_tfrecord/wake_vision'),
+}
+TFRECORD_PREFIX = {
+    'coco2017':    'coco',
+    'wake_vision': 'wake_vision',
+}
 
 
 @dataclass
@@ -22,9 +29,12 @@ class ModelConfig:
     learning_rate: float
     augmentation: str        # 'basic' | 'strong'
     loss: str                # 'bce' | 'focal'
+    dataset: str = 'coco2017'          # 'coco2017' | 'wake_vision'
+    optimizer: str = 'sgd'             # 'sgd' | 'adam'
+    weights: str = 'imagenet'          # 'imagenet' | 'none'
     focal_gamma: float = 2.0
     finetune_after_epoch: Optional[int] = None  # None = no fine-tuning
-    finetune_layers: int = 0                    # layers to unfreeze from top
+    finetune_layers: int = 0           # layers to unfreeze; -1 = unfreeze all
     finetune_lr_scale: float = 0.1
     dropout_rate: float = 0.0
     label_smoothing: float = 0.0
@@ -56,13 +66,13 @@ def _augment_strong(image, label, height: int, width: int):
     # Convert from [-1,1] to [0,1] for color ops, then back
     img01 = (image + 1.0) / 2.0
     img01 = tf.image.random_flip_left_right(img01)
-    # No vertical flip — people are upright
+    # No vertical flip
     img01 = tf.image.random_brightness(img01, 0.2)
     img01 = tf.image.random_contrast(img01, 0.8, 1.2)
     img01 = tf.image.random_hue(img01, 0.05)
     img01 = tf.image.random_saturation(img01, 0.8, 1.2)
     img01 = tf.clip_by_value(img01, 0.0, 1.0)
-    # Random crop: pad by 6px (6.25% of 96px — was 12px which was too aggressive)
+    # Random crop: pad by 6px
     img01 = tf.image.resize_with_crop_or_pad(img01, height + 6, width + 6)
     img01 = tf.image.random_crop(img01, [height, width, 3])
     image = img01 * 2.0 - 1.0
@@ -71,9 +81,16 @@ def _augment_strong(image, label, height: int, width: int):
 
 
 def load_dataset(config: ModelConfig, split: str) -> tf.data.Dataset:
-    filenames = sorted(str(p) for p in TFRECORD_DIR.glob(f'coco_{split}.record*'))
+    root = TFRECORD_ROOTS.get(config.dataset)
+    prefix = TFRECORD_PREFIX.get(config.dataset)
+    if root is None:
+        raise ValueError(f'Unknown dataset: {config.dataset}')
+    filenames = sorted(str(p) for p in root.glob(f'{prefix}_{split}.record*'))
     if not filenames:
-        raise FileNotFoundError(f'No TFRecords found at {TFRECORD_DIR}/coco_{split}.record*')
+        raise FileNotFoundError(
+            f'No TFRecords found at {root}/{prefix}_{split}.record*\n'
+            f'  For wake_vision, run: python download_wake_vision.py'
+        )
     ds = tf.data.TFRecordDataset(filenames)
     ds = ds.map(lambda ex: _parse_record(ex, config.input_height, config.input_width),
                 num_parallel_calls=tf.data.AUTOTUNE)
@@ -102,15 +119,16 @@ def _focal_loss(gamma=2.0):
 
 def build_model(config: ModelConfig) -> tf.keras.Model:
     shape = (config.input_height, config.input_width, 3)
+    weights = None if config.weights == 'none' else config.weights
 
     if config.architecture == 'mobilenetv1':
         backbone = tf.keras.applications.MobileNet(
             input_shape=shape, alpha=config.alpha,
-            include_top=False, weights='imagenet')
+            include_top=False, weights=weights)
     elif config.architecture == 'mobilenetv2':
         backbone = tf.keras.applications.MobileNetV2(
             input_shape=shape, alpha=config.alpha,
-            include_top=False, weights='imagenet')
+            include_top=False, weights=weights)
     else:
         raise ValueError(f'Unknown architecture: {config.architecture}')
 
@@ -131,6 +149,12 @@ def _compile(model: tf.keras.Model, config: ModelConfig, lr: float):
         m_mul=0.95,
         alpha=0.0,
     )
+    if config.optimizer == 'adam':
+        optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    else:
+        optimizer = tf.keras.optimizers.SGD(
+            learning_rate=lr_schedule, momentum=0.9, nesterov=True)
+
     if config.loss == 'focal':
         loss = _focal_loss(gamma=config.focal_gamma)
     else:
@@ -138,8 +162,7 @@ def _compile(model: tf.keras.Model, config: ModelConfig, lr: float):
             from_logits=True, label_smoothing=config.label_smoothing)
 
     model.compile(
-        optimizer=tf.keras.optimizers.SGD(
-            learning_rate=lr_schedule, momentum=0.9, nesterov=True),
+        optimizer=optimizer,
         loss=loss,
         metrics=[
             'accuracy',
@@ -191,8 +214,8 @@ def train(config: ModelConfig) -> dict:
     all_history = {}
     t0 = time.time()
 
-    if config.finetune_after_epoch and config.finetune_layers > 0:
-        # --- Phase 1: freeze backbone, warm up head only ---
+    if config.finetune_after_epoch and config.finetune_layers != 0:
+        # Freeze backbone, warm up head only
         model.layers[1].trainable = False
         _compile(model, config, config.learning_rate)
         phase1_epochs = config.finetune_after_epoch
@@ -201,15 +224,17 @@ def train(config: ModelConfig) -> dict:
                        epochs=phase1_epochs, callbacks=callbacks, verbose=1)
         _merge_history(all_history, h1.history)
 
-        # --- Phase 2: unfreeze top N backbone layers ---
+        # Unfreeze backbone for training
         backbone = model.layers[1]
         backbone.trainable = True
-        for layer in backbone.layers[:-config.finetune_layers]:
-            layer.trainable = False
+        if config.finetune_layers != -1:
+            for layer in backbone.layers[:-config.finetune_layers]:
+                layer.trainable = False
         fine_lr = config.learning_rate * config.finetune_lr_scale
         _compile(model, config, fine_lr)
         remaining = config.epochs - phase1_epochs
-        print(f'Phase 2: fine-tuning top {config.finetune_layers} backbone layers '
+        layers_desc = 'all layers' if config.finetune_layers == -1 else f'top {config.finetune_layers} layers'
+        print(f'Phase 2: fine-tuning backbone {layers_desc} '
               f'({remaining} epochs, lr={fine_lr:.2e})...')
         h2 = model.fit(train_ds, validation_data=val_ds,
                        epochs=remaining,
@@ -225,10 +250,8 @@ def train(config: ModelConfig) -> dict:
 
     elapsed = time.time() - t0
 
-    # Evaluate final best model
     print('Evaluating best checkpoint...')
     model.load_weights(ckpt_path)
-    # return_dict=True gives named metrics in Keras 3.x instead of 'compile_metrics'
     final_metrics = model.evaluate(val_ds, verbose=0, return_dict=True)
 
     # Best-epoch metrics from history as a reliable fallback / cross-check
@@ -268,31 +291,28 @@ def _merge_history(target: dict, source: dict):
 
 
 def _get_accuracy(result: dict) -> float:
-    """Return val accuracy from a result dict, tolerating Keras 3 key differences."""
-    # Prefer best_epoch_metrics (from history) — always reliable
     bm = result.get('best_epoch_metrics', {})
     if bm.get('accuracy', 0) > 0:
         return bm['accuracy']
-    # Fall back to final_metrics (return_dict=True gives proper names in Keras 3)
+    # Fall back to final_metrics
     fm = result.get('final_metrics', {})
     if fm.get('accuracy', 0) > 0:
         return fm['accuracy']
-    # Keras 3 fallback key when return_dict was not used
+    # fallback 
     if fm.get('compile_metrics', 0) > 0:
         return fm['compile_metrics']
-    # Last resort: best value from raw history
+    # Final fallback: best value from raw history
     hist_vals = result.get('history', {}).get('val_accuracy', [])
     return max(hist_vals) if hist_vals else 0.0
 
 
 def _get_metric(result: dict, name: str) -> float:
-    """Return a named metric from best_epoch_metrics, final_metrics, or history."""
+    # Return a named metric from best_epoch_metrics, final_metrics, or history
     bm = result.get('best_epoch_metrics', {})
     if name in bm:
         return bm[name]
     fm = result.get('final_metrics', {})
     if name in fm:
         return fm[name]
-    # Old-format files: derive from history
     hist_vals = result.get('history', {}).get(f'val_{name}', [])
     return max(hist_vals) if hist_vals else 0.0
