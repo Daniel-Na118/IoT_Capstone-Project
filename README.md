@@ -182,6 +182,19 @@ Edit the `MODEL_NAME`, `ALPHA`, `INPUT_HEIGHT`, `INPUT_WIDTH` variables at the t
 
 ## Results
 
+| Experiment | Val Acc | AUC | Precision | Recall | Time | Beats baseline |
+|---|---|---|---|---|---|---|
+| `v1_128` | **87.43%** | 0.8932 | 0.8987 | 0.8149 | 10.7m | ✓ |
+| `v2_basic` | **87.27%** | 0.8834 | 0.9236 | 0.7845 | 5.3m | ✓ |
+| `mobilenetv2_035` | 85.21% | 0.8702 | 0.9124 | 0.7456 | 5.1m | ✓ |
+| `v1_alpha05` | 84.99% | 0.8702 | 0.9075 | 0.7451 | 7.6m | ✓ |
+| `baseline` | 83.75% | 0.8523 | 0.8834 | 0.7394 | 7.7m | — |
+| `aug_v2` | 83.19% | 0.8560 | 0.8845 | 0.7239 | 7.6m | |
+| `transfer_v2` | 81.09% | 0.8358 | 0.8707 | 0.7303 | 9.7m | |
+| `scratch_v2` | 78.18% | 0.8037 | 0.8341 | 0.7036 | 17.2m | |
+
+All COCO experiments use SGD + cosine decay. Wake Vision experiments (`scratch_v2`, `transfer_v2`) use Adam.
+
 ![val_accuracy](./results/plots/val_accuracy_curves.png)
 
 ![final_accuracy](./results/plots/final_accuracy_bar.png)
