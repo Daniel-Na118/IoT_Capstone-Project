@@ -107,6 +107,7 @@ EXPERIMENTS = [
         optimizer='adam',
         weights='none',
         dropout_rate=0.2,
+        patience=15,
         extra_notes='MobileNetV2 0.35 trained from scratch with Adam — no pretrained weights',
     ),
 
@@ -127,6 +128,8 @@ EXPERIMENTS = [
         finetune_after_epoch=15,
         finetune_layers=-1,        # unfreeze all backbone layers
         finetune_lr_scale=0.01,    # LR = 1e-5 (two orders lower)
+        patience=7,
+        finetune_patience=15,
         extra_notes='Two-phase transfer learning: freeze 15ep → unfreeze all at 1e-5',
     ),
 ]
