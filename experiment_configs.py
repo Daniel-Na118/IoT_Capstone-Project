@@ -1,8 +1,9 @@
 from train_experiment import ModelConfig
 
-# Reference: TF Lite Micro person detection model achieves ~89.9% val accuracy
-# using MobileNet V1 alpha=0.25 at 96x96 on the VWW/COCO dataset.
-REFERENCE_ACCURACY = 89.9
+# REFERENCE_ACCURACY is loaded dynamically from results/baseline/metrics.json
+# at runtime in run_experiments.py and compare_results.py.
+# This fallback is only used if baseline hasn't been run yet.
+REFERENCE_ACCURACY_FALLBACK = 0.0
 
 EXPERIMENTS = [
     ModelConfig(
@@ -16,7 +17,7 @@ EXPERIMENTS = [
         learning_rate=1e-3,
         augmentation='basic',
         loss='bce',
-        extra_notes='Replication of original simple_train.py',
+        extra_notes='MobileNet V1 0.25 @ 96x96, basic aug — the reference to beat',
     ),
 
     ModelConfig(
@@ -30,24 +31,21 @@ EXPERIMENTS = [
         learning_rate=1e-3,
         augmentation='strong',
         loss='bce',
-        extra_notes='Strong augmentation: flip+crop+hue+saturation',
+        extra_notes='Same as baseline but with moderate color jitter + small random crop',
     ),
 
     ModelConfig(
-        name='finetune',
-        architecture='mobilenetv1',
-        alpha=0.25,
+        name='v2_basic',
+        architecture='mobilenetv2',
+        alpha=0.35,
         input_height=96,
         input_width=96,
-        epochs=40,
+        epochs=30,
         batch_size=128,
         learning_rate=1e-3,
-        augmentation='strong',
+        augmentation='basic',
         loss='bce',
-        finetune_after_epoch=20,
-        finetune_layers=14,   # unfreeze last 14 layers of MobileNetV1
-        finetune_lr_scale=0.1,
-        extra_notes='Phase 1: frozen backbone 20 epochs; Phase 2: unfreeze top layers 20 epochs',
+        extra_notes='MobileNet V2 0.35 with basic aug — isolates architecture gain from augmentation',
     ),
 
     ModelConfig(
@@ -61,22 +59,21 @@ EXPERIMENTS = [
         learning_rate=1e-3,
         augmentation='strong',
         loss='bce',
-        extra_notes='MobileNet V2 alpha=0.35 — inverted residuals, better acc/size tradeoff',
+        extra_notes='MobileNet V2 0.35 + moderate strong aug',
     ),
 
     ModelConfig(
-        name='focal_loss',
+        name='v1_128',
         architecture='mobilenetv1',
         alpha=0.25,
-        input_height=96,
-        input_width=96,
+        input_height=128,
+        input_width=128,
         epochs=30,
-        batch_size=128,
+        batch_size=64,
         learning_rate=1e-3,
-        augmentation='strong',
-        loss='focal',
-        focal_gamma=2.0,
-        extra_notes='Focal loss (gamma=2) to down-weight easy negatives',
+        augmentation='basic',
+        loss='bce',
+        extra_notes='MobileNet V1 0.25 at 128x128 — tests whether larger input helps',
     ),
 
     ModelConfig(
@@ -90,6 +87,6 @@ EXPERIMENTS = [
         learning_rate=1e-3,
         augmentation='strong',
         loss='bce',
-        extra_notes='MobileNet V1 alpha=0.5 — higher capacity ceiling test',
+        extra_notes='MobileNet V1 alpha=0.5 — more capacity at same resolution',
     ),
 ]

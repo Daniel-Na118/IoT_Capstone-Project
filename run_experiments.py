@@ -11,8 +11,15 @@ import json
 import pathlib
 import traceback
 
-from experiment_configs import EXPERIMENTS, REFERENCE_ACCURACY
-from train_experiment import train
+from experiment_configs import EXPERIMENTS, REFERENCE_ACCURACY_FALLBACK
+from train_experiment import train, _get_accuracy, _get_metric
+
+
+def _load_baseline_accuracy() -> float:
+    p = pathlib.Path('results/baseline/metrics.json')
+    if p.exists():
+        return _get_accuracy(json.loads(p.read_text()))
+    return REFERENCE_ACCURACY_FALLBACK
 
 
 def run_all(names_to_run: list[str], names_to_skip: list[str]):
@@ -38,20 +45,24 @@ def run_all(names_to_run: list[str], names_to_skip: list[str]):
                 traceback.print_exc()
                 continue
 
-        acc = result['final_metrics'].get('accuracy', 0) * 100
-        auc = result['final_metrics'].get('auc', 0)
+        acc = _get_accuracy(result) * 100
+        auc = _get_metric(result, 'auc')
         elapsed = result.get('training_time_seconds', 0)
         summary.append((config.name, acc, auc, elapsed))
+
+    ref_acc = _load_baseline_accuracy() * 100
+    ref_label = 'baseline (ref)' if ref_acc > 0 else 'baseline (not run)'
 
     print('\n' + '=' * 65)
     print(f'{"Experiment":<22} {"Val Acc %":>10} {"AUC":>8} {"Time (min)":>12}')
     print('-' * 65)
-    print(f'{"[TFLite Micro ref]":<22} {REFERENCE_ACCURACY:>10.2f} {"—":>8} {"—":>12}')
+    if ref_acc > 0:
+        print(f'{ref_label:<22} {ref_acc:>10.2f} {"—":>8} {"—":>12}')
     for name, acc, auc, elapsed in sorted(summary, key=lambda r: -r[1]):
-        beat = ' *' if acc > REFERENCE_ACCURACY else ''
+        beat = ' *' if acc > ref_acc > 0 and name != 'baseline' else ''
         print(f'{name:<22} {acc:>10.2f} {auc:>8.4f} {elapsed/60:>10.1f}m{beat}')
     print('=' * 65)
-    print('  * = beats TFLite Micro reference')
+    print('  * = beats baseline')
 
 
 if __name__ == '__main__':

@@ -52,21 +52,19 @@ def _augment_basic(image, label):
     return image, label
 
 
-def _augment_strong(image, label):
+def _augment_strong(image, label, height: int, width: int):
     # Convert from [-1,1] to [0,1] for color ops, then back
     img01 = (image + 1.0) / 2.0
     img01 = tf.image.random_flip_left_right(img01)
-    img01 = tf.image.random_flip_up_down(img01)
-    img01 = tf.image.random_brightness(img01, 0.3)
-    img01 = tf.image.random_contrast(img01, 0.7, 1.3)
-    img01 = tf.image.random_hue(img01, 0.1)
-    img01 = tf.image.random_saturation(img01, 0.7, 1.3)
+    # No vertical flip — people are upright
+    img01 = tf.image.random_brightness(img01, 0.2)
+    img01 = tf.image.random_contrast(img01, 0.8, 1.2)
+    img01 = tf.image.random_hue(img01, 0.05)
+    img01 = tf.image.random_saturation(img01, 0.8, 1.2)
     img01 = tf.clip_by_value(img01, 0.0, 1.0)
-    # Random crop: pad by 12px then crop back to original size
-    h = tf.shape(img01)[0]
-    w = tf.shape(img01)[1]
-    img01 = tf.image.resize_with_crop_or_pad(img01, h + 12, w + 12)
-    img01 = tf.image.random_crop(img01, (h, w, 3))
+    # Random crop: pad by 6px (6.25% of 96px — was 12px which was too aggressive)
+    img01 = tf.image.resize_with_crop_or_pad(img01, height + 6, width + 6)
+    img01 = tf.image.random_crop(img01, [height, width, 3])
     image = img01 * 2.0 - 1.0
     image = tf.clip_by_value(image, -1.0, 1.0)
     return image, label
@@ -81,7 +79,11 @@ def load_dataset(config: ModelConfig, split: str) -> tf.data.Dataset:
                 num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.filter(lambda x, y: tf.shape(x)[2] == 3)
     if split == 'train':
-        aug_fn = _augment_strong if config.augmentation == 'strong' else _augment_basic
+        if config.augmentation == 'strong':
+            h, w = config.input_height, config.input_width
+            aug_fn = lambda img, lbl: _augment_strong(img, lbl, h, w)
+        else:
+            aug_fn = _augment_basic
         ds = ds.map(aug_fn, num_parallel_calls=tf.data.AUTOTUNE)
     return ds
 
@@ -112,10 +114,8 @@ def build_model(config: ModelConfig) -> tf.keras.Model:
     else:
         raise ValueError(f'Unknown architecture: {config.architecture}')
 
-    backbone.trainable = False
-
     inputs = tf.keras.Input(shape)
-    x = backbone(inputs, training=False)
+    x = backbone(inputs)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     if config.dropout_rate > 0:
         x = tf.keras.layers.Dropout(config.dropout_rate)(x)
@@ -189,25 +189,25 @@ def train(config: ModelConfig) -> dict:
     ]
 
     all_history = {}
-
-    # --- Phase 1: frozen backbone ---
-    phase1_epochs = config.finetune_after_epoch if config.finetune_after_epoch else config.epochs
-    print(f'Phase 1: training head ({phase1_epochs} epochs, backbone frozen)...')
     t0 = time.time()
-    h1 = model.fit(train_ds, validation_data=val_ds,
-                   epochs=phase1_epochs, callbacks=callbacks, verbose=1)
-    _merge_history(all_history, h1.history)
 
-    # --- Phase 2: optional fine-tuning ---
     if config.finetune_after_epoch and config.finetune_layers > 0:
-        backbone = model.layers[1]  # backbone is the second layer
+        # --- Phase 1: freeze backbone, warm up head only ---
+        model.layers[1].trainable = False
+        _compile(model, config, config.learning_rate)
+        phase1_epochs = config.finetune_after_epoch
+        print(f'Phase 1: warming up head ({phase1_epochs} epochs, backbone frozen)...')
+        h1 = model.fit(train_ds, validation_data=val_ds,
+                       epochs=phase1_epochs, callbacks=callbacks, verbose=1)
+        _merge_history(all_history, h1.history)
+
+        # --- Phase 2: unfreeze top N backbone layers ---
+        backbone = model.layers[1]
         backbone.trainable = True
         for layer in backbone.layers[:-config.finetune_layers]:
             layer.trainable = False
-
         fine_lr = config.learning_rate * config.finetune_lr_scale
         _compile(model, config, fine_lr)
-
         remaining = config.epochs - phase1_epochs
         print(f'Phase 2: fine-tuning top {config.finetune_layers} backbone layers '
               f'({remaining} epochs, lr={fine_lr:.2e})...')
@@ -216,26 +216,42 @@ def train(config: ModelConfig) -> dict:
                        initial_epoch=0,
                        callbacks=callbacks, verbose=1)
         _merge_history(all_history, h2.history)
+    else:
+        # --- Full end-to-end training (backbone fully trainable) ---
+        print(f'Training end-to-end ({config.epochs} epochs, backbone trainable)...')
+        h1 = model.fit(train_ds, validation_data=val_ds,
+                       epochs=config.epochs, callbacks=callbacks, verbose=1)
+        _merge_history(all_history, h1.history)
 
     elapsed = time.time() - t0
 
     # Evaluate final best model
     print('Evaluating best checkpoint...')
     model.load_weights(ckpt_path)
-    eval_results = model.evaluate(val_ds, verbose=0)
-    metric_names = model.metrics_names
-    final_metrics = dict(zip(metric_names, eval_results))
+    # return_dict=True gives named metrics in Keras 3.x instead of 'compile_metrics'
+    final_metrics = model.evaluate(val_ds, verbose=0, return_dict=True)
+
+    # Best-epoch metrics from history as a reliable fallback / cross-check
+    best_epoch = int(max(range(len(all_history['val_accuracy'])),
+                         key=lambda i: all_history['val_accuracy'][i]))
+    best_epoch_metrics = {
+        k.removeprefix('val_'): v[best_epoch]
+        for k, v in all_history.items() if k.startswith('val_')
+    }
 
     output = {
         'config': asdict(config),
         'history': all_history,
         'final_metrics': final_metrics,
+        'best_epoch_metrics': best_epoch_metrics,
+        'best_epoch': best_epoch + 1,
         'training_time_seconds': elapsed,
     }
     metrics_path = results_dir / 'metrics.json'
     metrics_path.write_text(json.dumps(output, indent=2))
     print(f'Results saved to {metrics_path}')
-    print(f'Final val accuracy: {final_metrics.get("accuracy", 0):.4f}')
+    acc = _get_accuracy(output)
+    print(f'Final val accuracy: {acc:.4f}')
 
     # Export SavedModel
     export_path = f'exported_models/{config.name}/saved_model'
@@ -249,3 +265,34 @@ def train(config: ModelConfig) -> dict:
 def _merge_history(target: dict, source: dict):
     for k, v in source.items():
         target.setdefault(k, []).extend(v)
+
+
+def _get_accuracy(result: dict) -> float:
+    """Return val accuracy from a result dict, tolerating Keras 3 key differences."""
+    # Prefer best_epoch_metrics (from history) — always reliable
+    bm = result.get('best_epoch_metrics', {})
+    if bm.get('accuracy', 0) > 0:
+        return bm['accuracy']
+    # Fall back to final_metrics (return_dict=True gives proper names in Keras 3)
+    fm = result.get('final_metrics', {})
+    if fm.get('accuracy', 0) > 0:
+        return fm['accuracy']
+    # Keras 3 fallback key when return_dict was not used
+    if fm.get('compile_metrics', 0) > 0:
+        return fm['compile_metrics']
+    # Last resort: best value from raw history
+    hist_vals = result.get('history', {}).get('val_accuracy', [])
+    return max(hist_vals) if hist_vals else 0.0
+
+
+def _get_metric(result: dict, name: str) -> float:
+    """Return a named metric from best_epoch_metrics, final_metrics, or history."""
+    bm = result.get('best_epoch_metrics', {})
+    if name in bm:
+        return bm[name]
+    fm = result.get('final_metrics', {})
+    if name in fm:
+        return fm[name]
+    # Old-format files: derive from history
+    hist_vals = result.get('history', {}).get(f'val_{name}', [])
+    return max(hist_vals) if hist_vals else 0.0
