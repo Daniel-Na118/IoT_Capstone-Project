@@ -49,10 +49,18 @@ def _image_to_jpeg_bytes(pil_image) -> bytes:
     return buf.getvalue()
 
 
+# Wake Vision split names on HuggingFace : local file prefix used by train_experiment.py -- fixed to match download names
+HF_SPLIT_MAP = {
+    'train': 'train_quality',   # curated high-quality subset
+    'val': 'validation',
+}
+
+
 def write_split(split: str, max_samples: int, num_shards: int):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f'\nLoading Wake Vision {split} split (streaming, max {max_samples:,} samples)...')
-    ds = load_dataset(DATASET_ID, split=split, streaming=True, trust_remote_code=True)
+    hf_split = HF_SPLIT_MAP[split]
+    print(f'\nLoading Wake Vision {hf_split} split (streaming, max {max_samples:,} samples)...')
+    ds = load_dataset(DATASET_ID, split=hf_split, streaming=True)
 
     writers = []
     paths = []
@@ -91,7 +99,7 @@ def write_split(split: str, max_samples: int, num_shards: int):
     for w in writers:
         w.close()
 
-    print(f'\n{split} done: {total:,} examples written to {num_shards} shards')
+    print(f'\n{hf_split} → wake_vision_{split}: {total:,} examples written to {num_shards} shards')
     print(f'  person={counts["person"]:,}  no_person={counts["no_person"]:,}  '
           f'skipped={counts["skipped"]:,}')
     for p in paths:
@@ -110,7 +118,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     write_split('train', args.train_samples, args.train_shards)
-    write_split('validation', args.val_samples, num_shards=1)
+    write_split('val', args.val_samples, num_shards=1)
 
     print('\nWake Vision TFRecords ready.')
     print('Train with:  python run_experiments.py --only scratch_v2 transfer_v2')
