@@ -36,4 +36,9 @@ limitations under the License.
 TfLiteStatus GetImage(tflite::ErrorReporter* error_reporter, int image_width,
                       int image_height, int channels, int8_t* image_data);
 
+// Build the uint8→int8 quantization LUT used by GetImage. Call once from setup()
+// after AllocateTensors(), passing input->params.scale and input->params.zero_point
+// Assumes the model was trained with [-1, +1] float normalization (pixel/127.5 - 1)
+void QuantizeInit(float scale, int zero_point);
+
 #endif  // TENSORFLOW_LITE_MICRO_EXAMPLES_PERSON_DETECTION_IMAGE_PROVIDER_H_

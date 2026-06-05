@@ -43,7 +43,9 @@ TfLiteTensor* input = nullptr;
 
 LightState g_light_state = STATE_ARMED;
 
-constexpr int kTensorArenaSize = 136 * 1024;
+// Tuned for 128x128 grayscale MobileNet v1 alpha=0.25 with the tile-to-3
+// Concatenation prefix. Log interpreter->arena_used_bytes() after AllocateTensors
+constexpr int kTensorArenaSize = 180 * 1024;
 static uint8_t tensor_arena[kTensorArenaSize];
 }  // namespace
 
@@ -59,10 +61,19 @@ void setup() {
     return;
   }
 
-  static tflite::MicroMutableOpResolver<5> micro_op_resolver;
+  // Ops needed by the 128x128 grayscale MobileNet v1 with tile-to-3 prefix:
+  //   Concatenation  - tile 1ch -> 3ch
+  //   Conv2D / DepthwiseConv2D - MobileNet backbone
+  //   Mean           - GlobalAveragePooling2D usually lowers to MEAN
+  //   FullyConnected - final Dense(1)
+  // AveragePool2D / Reshape / Softmax kept as defensive extras
+  static tflite::MicroMutableOpResolver<8> micro_op_resolver;
   micro_op_resolver.AddAveragePool2D();
+  micro_op_resolver.AddConcatenation();
   micro_op_resolver.AddConv2D();
   micro_op_resolver.AddDepthwiseConv2D();
+  micro_op_resolver.AddFullyConnected();
+  micro_op_resolver.AddMean();
   micro_op_resolver.AddReshape();
   micro_op_resolver.AddSoftmax();
 
@@ -75,8 +86,13 @@ void setup() {
     TF_LITE_REPORT_ERROR(error_reporter, "AllocateTensors() failed");
     return;
   }
+  TF_LITE_REPORT_ERROR(error_reporter, "Arena: %u / %u bytes used",
+                       (unsigned)interpreter->arena_used_bytes(),
+                       (unsigned)kTensorArenaSize);
 
   input = interpreter->input(0);
+
+  QuantizeInit(input->params.scale, input->params.zero_point);
 
   PIR_init(PIR_PIN);
   IR_init();
@@ -104,17 +120,20 @@ void loop() {
     return;
   }
 
+  // Single-logit BCE output: int8 value > output zero_point  :  sigmoid > 0.5  :  person
   TfLiteTensor* output = interpreter->output(0);
-  int8_t person_score    = output->data.uint8[kPersonIndex];
-  int8_t no_person_score = output->data.uint8[kNotAPersonIndex];
+  bool is_person = output->data.int8[0] > output->params.zero_point;
+  // Adapt to RespondToDetection's two-score interface
+  int8_t person_score    = is_person ? 1 : 0;
+  int8_t no_person_score = is_person ? 0 : 1;
 
   RespondToDetection(error_reporter, person_score, no_person_score);
 
-  if (g_light_state == STATE_ARMED && person_score > no_person_score) {
+  if (g_light_state == STATE_ARMED && is_person) {
     IR_sendOn();
     g_light_state = STATE_LIGHT_ON;
     TF_LITE_REPORT_ERROR(error_reporter, "Person detected — light ON");
-  } else if (g_light_state == STATE_LIGHT_ON && no_person_score >= person_score) {
+  } else if (g_light_state == STATE_LIGHT_ON && !is_person) {
     IR_sendOff();
     g_light_state = STATE_ARMED;
     TF_LITE_REPORT_ERROR(error_reporter, "No person — light OFF");
