@@ -77,6 +77,22 @@ EXPERIMENTS = [
     ),
 
     ModelConfig(
+        name='v1_128_gray',
+        architecture='mobilenetv1',
+        alpha=0.25,
+        input_height=128,
+        input_width=128,
+        input_channels=1,
+        epochs=30,
+        batch_size=64,
+        learning_rate=1e-3,
+        augmentation='basic',
+        loss='bce',
+        weights='imagenet',
+        extra_notes='v1_128 grayscale on COCO',
+    ),
+
+    ModelConfig(
         name='v1_alpha05',
         architecture='mobilenetv1',
         alpha=0.5,
@@ -143,6 +159,25 @@ EXPERIMENTS = [
         optimizer='adam',
         patience=10,
         extra_notes='v1_128 on Wake Vision with Adam — cleaner labels + adaptive optimizer',
+    ),
+
+    ModelConfig(
+        name='v1_128_gray_wv',
+        architecture='mobilenetv1',
+        alpha=0.25,
+        input_height=128,
+        input_width=128,
+        input_channels=1,
+        epochs=40,
+        batch_size=64,
+        learning_rate=1e-3,
+        augmentation='basic',
+        loss='bce',
+        dataset='wake_vision',
+        optimizer='adam',
+        weights='imagenet',
+        patience=10,
+        extra_notes='v1_128 grayscale on Wake Vision',
     ),
 
     ModelConfig(

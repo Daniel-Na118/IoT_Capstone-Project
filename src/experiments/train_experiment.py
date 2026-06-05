@@ -31,6 +31,7 @@ class ModelConfig:
     learning_rate: float
     augmentation: str        # 'basic' | 'strong'
     loss: str                # 'bce' | 'focal'
+    input_channels: int = 3            # 1 = grayscale (tiled to 3 internally when using ImageNet weights)
     dataset: str = 'coco2017'          # 'coco2017' | 'wake_vision'
     optimizer: str = 'sgd'             # 'sgd' | 'adam'
     weights: str = 'imagenet'          # 'imagenet' | 'none'
@@ -45,13 +46,15 @@ class ModelConfig:
     extra_notes: str = ''
 
 
-def _parse_record(example, height, width):
+def _parse_record(example, height, width, channels):
     parsed = tf.io.parse_example(
         example[tf.newaxis], {
             'image/encoded': tf.io.FixedLenFeature(shape=(), dtype=tf.string),
             'image/class':   tf.io.FixedLenFeature(shape=(), dtype=tf.int64),
         })
-    img = tf.io.decode_jpeg(parsed['image/encoded'][0])
+    img = tf.io.decode_jpeg(parsed['image/encoded'][0], channels=3)
+    if channels == 1:
+        img = tf.image.rgb_to_grayscale(img)
     img = tf.image.resize(img, (height, width))
     img = tf.cast(img, tf.float32) / 127.5 - 1.0
     label = parsed['image/class']
@@ -66,19 +69,20 @@ def _augment_basic(image, label):
     return image, label
 
 
-def _augment_strong(image, label, height: int, width: int):
+def _augment_strong(image, label, height: int, width: int, channels: int):
     # Convert from [-1,1] to [0,1] for color ops, then back
     img01 = (image + 1.0) / 2.0
     img01 = tf.image.random_flip_left_right(img01)
     # No vertical flip
     img01 = tf.image.random_brightness(img01, 0.2)
     img01 = tf.image.random_contrast(img01, 0.8, 1.2)
-    img01 = tf.image.random_hue(img01, 0.05)
-    img01 = tf.image.random_saturation(img01, 0.8, 1.2)
+    if channels == 3:
+        img01 = tf.image.random_hue(img01, 0.05)
+        img01 = tf.image.random_saturation(img01, 0.8, 1.2)
     img01 = tf.clip_by_value(img01, 0.0, 1.0)
     # Random crop: pad by 6px
     img01 = tf.image.resize_with_crop_or_pad(img01, height + 6, width + 6)
-    img01 = tf.image.random_crop(img01, [height, width, 3])
+    img01 = tf.image.random_crop(img01, [height, width, channels])
     image = img01 * 2.0 - 1.0
     image = tf.clip_by_value(image, -1.0, 1.0)
     return image, label
@@ -96,13 +100,14 @@ def load_dataset(config: ModelConfig, split: str) -> tf.data.Dataset:
             f'  For wake_vision, run: python download_wake_vision.py'
         )
     ds = tf.data.TFRecordDataset(filenames)
-    ds = ds.map(lambda ex: _parse_record(ex, config.input_height, config.input_width),
-                num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.filter(lambda x, y: tf.shape(x)[2] == 3)
+    ds = ds.map(
+        lambda ex: _parse_record(ex, config.input_height, config.input_width, config.input_channels),
+        num_parallel_calls=tf.data.AUTOTUNE)
+    # Channel filter is no longer needed: decode_jpeg(channels=3) guarantees consistent shape
     if split == 'train':
         if config.augmentation == 'strong':
-            h, w = config.input_height, config.input_width
-            aug_fn = lambda img, lbl: _augment_strong(img, lbl, h, w)
+            h, w, c = config.input_height, config.input_width, config.input_channels
+            aug_fn = lambda img, lbl: _augment_strong(img, lbl, h, w, c)
         else:
             aug_fn = _augment_basic
         ds = ds.map(aug_fn, num_parallel_calls=tf.data.AUTOTUNE)
@@ -122,22 +127,31 @@ def _focal_loss(gamma=2.0):
 
 
 def build_model(config: ModelConfig) -> tf.keras.Model:
-    shape = (config.input_height, config.input_width, 3)
+    in_shape = (config.input_height, config.input_width, config.input_channels)
     weights = None if config.weights == 'none' else config.weights
+
+    inputs = tf.keras.Input(in_shape)
+    # MobileNet ImageNet weights require 3-channel input — tile grayscale to 3
+    # The exported model still has a 1-channel external input tensor
+    if config.input_channels == 1 and weights == 'imagenet':
+        x = tf.keras.layers.Concatenate(axis=-1)([inputs, inputs, inputs])
+        backbone_shape = (config.input_height, config.input_width, 3)
+    else:
+        x = inputs
+        backbone_shape = in_shape
 
     if config.architecture == 'mobilenetv1':
         backbone = tf.keras.applications.MobileNet(
-            input_shape=shape, alpha=config.alpha,
+            input_shape=backbone_shape, alpha=config.alpha,
             include_top=False, weights=weights)
     elif config.architecture == 'mobilenetv2':
         backbone = tf.keras.applications.MobileNetV2(
-            input_shape=shape, alpha=config.alpha,
+            input_shape=backbone_shape, alpha=config.alpha,
             include_top=False, weights=weights)
     else:
         raise ValueError(f'Unknown architecture: {config.architecture}')
 
-    inputs = tf.keras.Input(shape)
-    x = backbone(inputs)
+    x = backbone(x)
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     if config.dropout_rate > 0:
         x = tf.keras.layers.Dropout(config.dropout_rate)(x)
