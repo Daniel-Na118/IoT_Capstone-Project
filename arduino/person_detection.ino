@@ -60,6 +60,18 @@ int g_check_attempts = 0;
 int g_off_confirm_count = 0;
 unsigned long g_last_check_ms = 0;
 unsigned long g_cooldown_start_ms = 0;
+unsigned long g_last_heartbeat_ms = 0;
+
+const char* StateName(SystemState state) {
+  switch (state) {
+    case STATE_ARMED:          return "ARMED";
+    case STATE_CHECKING:       return "CHECKING";
+    case STATE_LIGHT_ON:       return "LIGHT_ON";
+    case STATE_CONFIRMING_OFF: return "CONFIRMING_OFF";
+    case STATE_COOLDOWN:       return "COOLDOWN";
+  }
+  return "UNKNOWN";
+}
 
 // Tuned for 128x128 grayscale MobileNet v1 alpha=0.25 with the tile-to-3
 // Concatenation prefix. Log interpreter->arena_used_bytes() after AllocateTensors
@@ -68,6 +80,10 @@ static uint8_t tensor_arena[kTensorArenaSize];
 }  // namespace
 
 void setup() {
+  Serial.begin(9600);
+  unsigned long serial_wait_start = millis();
+  while (!Serial && millis() - serial_wait_start < 3000) {}
+
   static tflite::MicroErrorReporter micro_error_reporter;
   error_reporter = &micro_error_reporter;
 
@@ -119,6 +135,12 @@ void setup() {
 void loop() {
   bool pir_active = PIR_motionDetected();
   unsigned long now = millis();
+
+  if (now - g_last_heartbeat_ms >= 1000) {
+    g_last_heartbeat_ms = now;
+    TF_LITE_REPORT_ERROR(error_reporter, "[heartbeat] PIR=%d state=%s",
+                         pir_active ? 1 : 0, StateName(g_state));
+  }
 
   // PIR state transitions
   switch (g_state) {
