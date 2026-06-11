@@ -20,10 +20,8 @@ limitations under the License.
 #ifndef ARDUINO_EXCLUDE_CODE
 
 #include "detection_responder.h"
-#include "ir_sender.h"
 
 #include "Arduino.h"
-#include <IRremote.hpp>
 
 // Flash the blue LED after each inference
 void RespondToDetection(tflite::ErrorReporter* error_reporter,
@@ -60,18 +58,6 @@ void RespondToDetection(tflite::ErrorReporter* error_reporter,
 
   TF_LITE_REPORT_ERROR(error_reporter, "Person score: %d No person score: %d",
                        person_score, no_person_score);
-}
-
-void IR_init() {
-  IrSender.begin(IR_SEND_PIN);
-}
-
-void IR_sendOn() {
-  IrSender.sendNEC(IR_ON_ADDRESS, IR_ON_COMMAND, 0);
-}
-
-void IR_sendOff() {
-  IrSender.sendNEC(IR_OFF_ADDRESS, IR_OFF_COMMAND, 0);
 }
 
 #endif  // ARDUINO_EXCLUDE_CODE
