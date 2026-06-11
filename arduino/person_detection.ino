@@ -31,9 +31,23 @@ limitations under the License.
 
 #define PIR_PIN 2
 
-// ARMED:    PIR inactive, light off — waiting for motion.
-// LIGHT_ON: person detected, light on — waiting for PIR to clear.
-enum LightState { STATE_ARMED, STATE_LIGHT_ON };
+// ARMED:          PIR inactive, light off — waiting for motion
+// CHECKING:       PIR active, light off — retrying inference for a person
+// LIGHT_ON:       person confirmed, light on — PIR active, no inference
+// CONFIRMING_OFF: PIR cleared, light on — confirming no person before turning off
+// COOLDOWN:       cooldown to give up finding a person — ignore PIR for a while (false-alarm prevention)
+enum SystemState {
+  STATE_ARMED,
+  STATE_CHECKING,
+  STATE_LIGHT_ON,
+  STATE_CONFIRMING_OFF,
+  STATE_COOLDOWN,
+};
+
+constexpr unsigned long kCheckIntervalMs = 3000;  // time between inference retries
+constexpr int kMaxCheckAttempts = 7;              // give up after this many "no person" checks
+constexpr unsigned long kCooldownMs = 10000;      // ignore PIR this long after giving up
+constexpr int kOffConfirmCount = 2;               // consecutive "no person" checks before turning off
 
 namespace {
 tflite::ErrorReporter* error_reporter = nullptr;
@@ -41,7 +55,11 @@ const tflite::Model* model = nullptr;
 tflite::MicroInterpreter* interpreter = nullptr;
 TfLiteTensor* input = nullptr;
 
-LightState g_light_state = STATE_ARMED;
+SystemState g_state = STATE_ARMED;
+int g_check_attempts = 0;
+int g_off_confirm_count = 0;
+unsigned long g_last_check_ms = 0;
+unsigned long g_cooldown_start_ms = 0;
 
 // Tuned for 128x128 grayscale MobileNet v1 alpha=0.25 with the tile-to-3
 // Concatenation prefix. Log interpreter->arena_used_bytes() after AllocateTensors
@@ -100,14 +118,55 @@ void setup() {
 
 void loop() {
   bool pir_active = PIR_motionDetected();
+  unsigned long now = millis();
 
-  // Only run inference when a state transition may be needed:
-  //   ARMED + motion    → try to confirm a person (turn light on)
-  //   LIGHT_ON + no motion → verify no person remains (turn light off)
-  bool should_infer = (g_light_state == STATE_ARMED   &&  pir_active) ||
-                      (g_light_state == STATE_LIGHT_ON && !pir_active);
+  // PIR state transitions
+  switch (g_state) {
+    case STATE_ARMED:
+      if (pir_active) {
+        g_state = STATE_CHECKING;
+        g_check_attempts = 0;
+        g_last_check_ms = now - kCheckIntervalMs;
+        TF_LITE_REPORT_ERROR(error_reporter, "Motion detected — checking for person");
+      }
+      break;
 
+    case STATE_CHECKING:
+      if (!pir_active) {
+        g_state = STATE_ARMED;
+        TF_LITE_REPORT_ERROR(error_reporter, "Motion stopped before person confirmed — re-armed");
+      }
+      break;
+
+    case STATE_LIGHT_ON:
+      if (!pir_active) {
+        g_state = STATE_CONFIRMING_OFF;
+        g_off_confirm_count = 0;
+        g_last_check_ms = now - kCheckIntervalMs; 
+        TF_LITE_REPORT_ERROR(error_reporter, "Motion stopped — confirming no person");
+      }
+      break;
+
+    case STATE_CONFIRMING_OFF:
+      if (pir_active) {
+        g_state = STATE_LIGHT_ON;
+        TF_LITE_REPORT_ERROR(error_reporter, "Motion resumed — staying on");
+      }
+      break;
+
+    case STATE_COOLDOWN:
+      if (now - g_cooldown_start_ms >= kCooldownMs) {
+        g_state = STATE_ARMED;
+        TF_LITE_REPORT_ERROR(error_reporter, "Cooldown finished — re-armed");
+      }
+      break;
+  }
+
+  // Only STATE_CHECKING and STATE_CONFIRMING_OFF run inference, on a fixed interval
+  bool should_infer = (g_state == STATE_CHECKING || g_state == STATE_CONFIRMING_OFF) &&
+                      (now - g_last_check_ms >= kCheckIntervalMs);
   if (!should_infer) return;
+  g_last_check_ms = now;
 
   if (kTfLiteOk != GetImage(error_reporter, kNumCols, kNumRows, kNumChannels,
                             input->data.int8)) {
@@ -129,13 +188,34 @@ void loop() {
 
   RespondToDetection(error_reporter, person_score, no_person_score);
 
-  if (g_light_state == STATE_ARMED && is_person) {
-    IR_sendOn();
-    g_light_state = STATE_LIGHT_ON;
-    TF_LITE_REPORT_ERROR(error_reporter, "Person detected — light ON");
-  } else if (g_light_state == STATE_LIGHT_ON && !is_person) {
-    IR_sendOff();
-    g_light_state = STATE_ARMED;
-    TF_LITE_REPORT_ERROR(error_reporter, "No person — light OFF");
+  if (g_state == STATE_CHECKING) {
+    g_check_attempts++;
+    TF_LITE_REPORT_ERROR(error_reporter, "Check %d/%d: %s", g_check_attempts,
+                         kMaxCheckAttempts, is_person ? "person" : "no person");
+    if (is_person) {
+      IR_sendOn();
+      g_state = STATE_LIGHT_ON;
+      TF_LITE_REPORT_ERROR(error_reporter, "Person confirmed — light ON");
+    } else if (g_check_attempts >= kMaxCheckAttempts) {
+      g_state = STATE_COOLDOWN;
+      g_cooldown_start_ms = now;
+      TF_LITE_REPORT_ERROR(error_reporter,
+                           "No person after %d checks — cooldown %lus",
+                           kMaxCheckAttempts, kCooldownMs / 1000);
+    }
+  } else if (g_state == STATE_CONFIRMING_OFF) {
+    if (is_person) {
+      g_off_confirm_count = 0;
+      TF_LITE_REPORT_ERROR(error_reporter, "Still a person — staying on");
+    } else {
+      g_off_confirm_count++;
+      TF_LITE_REPORT_ERROR(error_reporter, "No person (%d/%d)", g_off_confirm_count,
+                           kOffConfirmCount);
+      if (g_off_confirm_count >= kOffConfirmCount) {
+        IR_sendOff();
+        g_state = STATE_ARMED;
+        TF_LITE_REPORT_ERROR(error_reporter, "Confirmed empty — light OFF");
+      }
+    }
   }
 }
