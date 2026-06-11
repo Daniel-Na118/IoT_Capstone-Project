@@ -29,7 +29,7 @@ limitations under the License.
 #include "tensorflow/lite/schema/schema_generated.h"
 #include "tensorflow/lite/version.h"
 
-#define PIR_PIN 2
+#define PIR_PIN 12
 
 // ARMED:          PIR inactive, light off — waiting for motion
 // CHECKING:       PIR active, light off — retrying inference for a person

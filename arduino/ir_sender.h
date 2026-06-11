@@ -1,7 +1,7 @@
 #ifndef IR_SENDER_H_
 #define IR_SENDER_H_
 
-#define IR_SEND_PIN 3
+#define IR_SEND_PIN 11
 
 // NEC protocol codes for light
 #define IR_ON_ADDRESS  0x55  // TODO: replace on-address
