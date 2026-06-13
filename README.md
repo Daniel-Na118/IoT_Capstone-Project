@@ -224,3 +224,10 @@ SGD에서 Adam으로 optimizer을 바꿨더니 2% 정도의 validation accuracy 
 ![final_accuracy](./results/plots/final_accuracy_bar.png)
 
 ![training_curve](./results/plots/training_curves_4panel.png)
+
+# Deployment
+
+## Results
+
+https://github.com/user-attachments/assets/14f1989e-53e6-4399-8721-164554f77b55
+
