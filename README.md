@@ -230,4 +230,7 @@ SGD에서 Adam으로 optimizer을 바꿨더니 2% 정도의 validation accuracy 
 ## Results
 
 https://github.com/user-attachments/assets/14f1989e-53e6-4399-8721-164554f77b55
+Result Video without Casing
 
+https://github.com/user-attachments/assets/e8d5616f-0da3-407f-a36e-d1f9b993a799
+Result Video with Casing
