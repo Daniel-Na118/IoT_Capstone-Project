@@ -11,7 +11,7 @@
 
 #define UNLOCK_PASSWORD "placeholder"
 
-#define POST_UNLOCK_DELAY_MS 1200
+#define POST_UNLOCK_DELAY_MS 3000
 #define COOLDOWN_MS 3000
 
 USBHIDKeyboard Keyboard;
